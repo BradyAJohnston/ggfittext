@@ -127,8 +127,51 @@ wraplabel.text <- function(tg, w) {
   )
 }
 wraplabel.richtext_grob <- function(tg, w) {
-  paste(
-    stringi::stri_wrap(getlabel(tg), w, normalize = FALSE),
-    collapse = "<br>"
-  )
+
+  # Parse label to HTML
+  label <- markdown::markdownToHTML(text = getlabel(tg), 
+                                    options = c("use_xhtml", "fragment_only"))
+
+  # Parse HTML into a doctree
+  doctree <- xml2::read_html(paste0("<!DOCTYPE html>", label))
+
+  # Wrap the plain text, then identify the positions at which line breaks need to
+  # be inserted
+  wrapped <- stringi::stri_wrap(xml2::xml_text(doctree), w)
+  wrapped <- wrapped[-length(wrapped)]
+  nl_positions <- cumsum(stringi::stri_length(wrapped))
+
+  # Work forwards through the tree, inserting newlines where needed
+  dc_list <- xml2::as_list(doctree)
+  wrap_doctree <- function(dc_list, nl_positions, chars_to_left = 0) {
+
+    if (is.list(dc_list)) {
+      for (i in seq_along(dc_list)) {
+        w <- wrap_doctree(dc_list[[i]], nl_positions, chars_to_left)
+        chars_to_left <- chars_to_left + w$chars_to_left
+        dc_list[[i]] <- w$wrapped
+      }
+      return(list(chars_to_left = chars_to_left, wrapped = dc_list))
+    }
+
+    l <- stringi::stri_length(dc_list)[[1]]
+    for (pos in rev(seq(1, l))) {
+      if (pos %in% (nl_positions - chars_to_left)) {
+        stringi::stri_sub(dc_list, pos + 1, pos) <- "\n"
+      }
+    }
+    dc_list <- stringi::stri_trim_both(dc_list) # Trim whitespace
+    chars_to_left <- chars_to_left + l
+    return(list(chars_to_left = chars_to_left, wrapped = dc_list))
+  }
+
+  dc_list <- wrap_doctree(dc_list, nl_positions)$wrapped
+
+  # Convert back to html, then to character
+  label <- as.character(xml2::as_xml_document(dc_list))
+
+  # Strip xml version tag
+  label <- gsub("^<[^>]+>", "", label)
+
+  return(label)
 }
