@@ -143,26 +143,45 @@ wraplabel.richtext_grob <- function(tg, w) {
 
   # Work forwards through the tree, inserting newlines where needed
   dc_list <- xml2::as_list(doctree)
-  wrap_doctree <- function(dc_list, nl_positions, chars_to_left = 0) {
+  wrap_doctree <- function(node, nl_positions, chars_to_left = 0) {
 
-    if (is.list(dc_list)) {
+    if (is.list(node)) {
       for (i in seq_along(dc_list)) {
-        w <- wrap_doctree(dc_list[[i]], nl_positions, chars_to_left)
+        w <- wrap_doctree(node[[i]], nl_positions, chars_to_left)
         chars_to_left <- chars_to_left + w$chars_to_left
-        dc_list[[i]] <- w$wrapped
+        node[[i]] <- w$wrapped
       }
-      return(list(chars_to_left = chars_to_left, wrapped = dc_list))
+      return(list(wrapped = node, chars_to_left = chars_to_left))
     }
 
-    l <- stringi::stri_length(dc_list)[[1]]
-    for (pos in rev(seq(1, l))) {
-      if (pos %in% (nl_positions - chars_to_left)) {
-        stringi::stri_sub(dc_list, pos + 1, pos) <- "\n"
+    # Update chars_to_left
+    chars_to_left <- chars_to_left + stringi::stri_length(node)
+
+    # Split the string at the appropriate positions
+    split_string <- function(string, positions) {
+      positions <- sort(positions)
+      if (length(positions) > 1) {
+        chomped <- split_string(string, tail(positions, 1))
+        return(c(
+          split_string(chomped[1], head(positions, -1)),
+          chomped[2]
+        ))
       }
+      return(c(
+        stringi::stri_sub(string, 0, positions), 
+        stringi::stri_sub(string, positions + 1, stringi::stri_length(string))
+      ))
     }
-    dc_list <- stringi::stri_trim_both(dc_list) # Trim whitespace
-    chars_to_left <- chars_to_left + l
-    return(list(chars_to_left = chars_to_left, wrapped = dc_list))
+    strings <- split_string(node, nl_positions + 1)
+    strings <- stringi::stri_trim_both(strings)
+
+    # Build new node
+    breaks <- lapply(seq_along(strings), function(x) list())
+    node <- c(rbind(as.list(strings), breaks))
+    names(node) <- c(rbind(rep("", length(strings)), rep("br", length(strings))))
+    node <- head(node, -1)
+
+    return(list(wrapped = node, chars_to_left = chars_to_left))
   }
 
   dc_list <- wrap_doctree(dc_list, nl_positions)$wrapped
@@ -172,6 +191,9 @@ wraplabel.richtext_grob <- function(tg, w) {
 
   # Strip xml version tag
   label <- gsub("^<[^>]+>", "", label)
+
+  # Strip weird newline characters and whitespace
+  label <- gsub("\\n\\s+", "", label)
 
   return(label)
 }
